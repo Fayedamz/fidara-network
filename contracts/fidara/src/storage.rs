@@ -23,9 +23,7 @@ pub fn get_next_id(env: &Env) -> u64 {
 }
 
 pub fn set_next_id(env: &Env, id: u64) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::NextId, &id);
+    env.storage().persistent().set(&DataKey::NextId, &id);
     env.storage()
         .persistent()
         .extend_ttl(&DataKey::NextId, PLAN_TTL_THRESHOLD, PLAN_TTL_LEDGERS);
@@ -35,9 +33,11 @@ pub fn save_plan(env: &Env, plan: &Plan) {
     env.storage()
         .persistent()
         .set(&DataKey::Plan(plan.id), plan);
-    env.storage()
-        .persistent()
-        .extend_ttl(&DataKey::Plan(plan.id), PLAN_TTL_THRESHOLD, PLAN_TTL_LEDGERS);
+    env.storage().persistent().extend_ttl(
+        &DataKey::Plan(plan.id),
+        PLAN_TTL_THRESHOLD,
+        PLAN_TTL_LEDGERS,
+    );
 }
 
 pub fn load_plan(env: &Env, id: u64) -> Option<Plan> {

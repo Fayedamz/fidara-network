@@ -7,7 +7,7 @@
 
 import {
   isConnected,
-  getAddress,
+  getPublicKey,
   signTransaction,
   setAllowed,
 } from "@stellar/freighter-api";
@@ -23,19 +23,16 @@ export interface WalletState {
  */
 export async function checkFreighter(): Promise<WalletState> {
   try {
-    const result = await isConnected();
-    if (!result.isConnected) {
+    const connected = await isConnected();
+    if (!connected) {
       return { connected: false, publicKey: null, error: "Freighter extension not found." };
     }
-    const addressResult = await getAddress();
-    if (addressResult.error) {
-      return { connected: false, publicKey: null, error: addressResult.error };
+    try {
+      const publicKey = await getPublicKey();
+      return { connected: true, publicKey, error: null };
+    } catch {
+      return { connected: false, publicKey: null, error: "Wallet locked or no account selected." };
     }
-    return {
-      connected: true,
-      publicKey: addressResult.address ?? null,
-      error: null,
-    };
   } catch (e) {
     return { connected: false, publicKey: null, error: String(e) };
   }
@@ -65,7 +62,9 @@ export async function signXdr(
   xdr: string,
   network = "Test SDF Network ; September 2015"
 ): Promise<string> {
-  const result = await signTransaction(xdr, { networkPassphrase: network });
-  if (result.error) throw new Error(result.error);
-  return result.signedTxXdr;
+  const signedXdr = await signTransaction(xdr, { networkPassphrase: network });
+  if (typeof signedXdr !== "string") {
+    throw new Error("Unexpected response from Freighter signTransaction");
+  }
+  return signedXdr;
 }

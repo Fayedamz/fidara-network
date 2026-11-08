@@ -7,6 +7,14 @@ import { MIN_REVIEW_WINDOW_LEDGERS, type CreatePlanParams } from "../types/contr
 /** Minimum review window in days (mirrors MIN_REVIEW_WINDOW_LEDGERS ≈ 1 day). */
 const MIN_REVIEW_WINDOW_DAYS = Math.ceil((MIN_REVIEW_WINDOW_LEDGERS * 5) / 86_400);
 
+type CreatePlanStatus =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "awaiting"; id: bigint }
+  | { kind: "cancelling"; id: bigint }
+  | { kind: "cancelled" }
+  | { kind: "err"; msg: string };
+
 export function CreatePlan() {
   const { wallet } = useWallet();
 
@@ -23,15 +31,7 @@ export function CreatePlan() {
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  type Status =
-    | { kind: "idle" }
-    | { kind: "pending" }
-    | { kind: "awaiting"; id: bigint }
-    | { kind: "cancelling" }
-    | { kind: "cancelled" }
-    | { kind: "err"; msg: string };
-
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [status, setStatus] = useState<CreatePlanStatus>({ kind: "idle" });
 
   const set = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -112,9 +112,10 @@ export function CreatePlan() {
 
   async function handleCancel() {
     if (status.kind !== "awaiting" || !wallet.publicKey) return;
-    setStatus({ kind: "cancelling" });
+    const id = status.id;
+    setStatus({ kind: "cancelling", id });
     try {
-      await cancelPlan(wallet.publicKey, status.id);
+      await cancelPlan(wallet.publicKey, id);
       setStatus({ kind: "cancelled" });
     } catch (err) {
       setStatus({ kind: "err", msg: String(err) });
@@ -122,19 +123,20 @@ export function CreatePlan() {
   }
 
   // ---- post-creation AwaitingMentor state ----
-  if (status.kind === "awaiting") {
+  if (status.kind === "awaiting" || status.kind === "cancelling") {
+    const id = status.id;
     const deadlineLedger = dateToLedger(new Date(form.deadlineDate), BASE_LEDGER, BASE_TIMESTAMP_MS);
     return (
       <main className="page page-create">
         <h1>Plan Created — Awaiting Mentor</h1>
         <p className="intro">
-          Your plan (ID: <strong>{status.id.toString()}</strong>) has been created and
+          Your plan (ID: <strong>{id.toString()}</strong>) has been created and
           your stake is held in the contract. The plan is now <strong>awaiting your
           mentor's acceptance</strong>. Share the plan ID with your mentor so they can
           call "Accept Plan" on the Mentor page.
         </p>
         <dl className="plan-meta">
-          <dt>Plan ID</dt><dd>{status.id.toString()}</dd>
+          <dt>Plan ID</dt><dd>{id.toString()}</dd>
           <dt>Mentor to notify</dt><dd>{form.mentor}</dd>
           <dt>Stake</dt><dd>{form.stakeAmount} stroops</dd>
           <dt>Deadline</dt>
@@ -148,7 +150,7 @@ export function CreatePlan() {
         </p>
         <button
           onClick={handleCancel}
-          disabled={status.kind === "cancelling" as unknown as boolean}
+          disabled={status.kind === "cancelling"}
           className="btn-reject"
           aria-label="Cancel plan and refund stake"
         >

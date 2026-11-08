@@ -1,4 +1,8 @@
 #![no_std]
+// create_plan has 9 parameters, which is above clippy's default limit of 7.
+// Soroban contracts pass each field individually as the ABI does not support
+// struct arguments at the call boundary.
+#![allow(clippy::too_many_arguments)]
 
 mod contract;
 mod errors;

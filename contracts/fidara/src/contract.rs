@@ -72,7 +72,7 @@ impl FidaraContract {
         if stake_amount <= 0 {
             return Err(FidaraError::InvalidStakeAmount);
         }
-        if milestone_count < 1 || milestone_count > 12 {
+        if !(1..=12).contains(&milestone_count) {
             return Err(FidaraError::InvalidMilestoneCount);
         }
         if review_window_ledgers < MIN_REVIEW_WINDOW_LEDGERS {
@@ -221,7 +221,8 @@ impl FidaraContract {
         Self::set_milestone(&mut plan, index, milestone);
         storage::save_plan(&env, &plan);
 
-        env.events().publish((TOPIC_FIDARA, EV_SUBMITTED), (plan_id, index));
+        env.events()
+            .publish((TOPIC_FIDARA, EV_SUBMITTED), (plan_id, index));
 
         Ok(())
     }
@@ -252,7 +253,8 @@ impl FidaraContract {
             &share,
         );
 
-        env.events().publish((TOPIC_FIDARA, EV_VERIFIED), (plan_id, index, share));
+        env.events()
+            .publish((TOPIC_FIDARA, EV_VERIFIED), (plan_id, index, share));
 
         Ok(())
     }
@@ -276,7 +278,8 @@ impl FidaraContract {
         Self::set_milestone(&mut plan, index, milestone);
         storage::save_plan(&env, &plan);
 
-        env.events().publish((TOPIC_FIDARA, EV_REJECTED), (plan_id, index));
+        env.events()
+            .publish((TOPIC_FIDARA, EV_REJECTED), (plan_id, index));
 
         Ok(())
     }
@@ -312,7 +315,8 @@ impl FidaraContract {
         );
 
         // auto-released = mentor was silent
-        env.events().publish((TOPIC_FIDARA, EV_RELEASED), (plan_id, index));
+        env.events()
+            .publish((TOPIC_FIDARA, EV_RELEASED), (plan_id, index));
 
         Ok(())
     }

@@ -129,7 +129,14 @@ fn test_create_plan_rejects_zero_stake() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &0, &1, &review, &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &0,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -143,7 +150,14 @@ fn test_create_plan_rejects_negative_stake() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &-1, &1, &review, &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &-1,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -158,7 +172,14 @@ fn test_create_plan_rejects_deadline_in_past() {
     // deadline == current ledger — should fail (must be > current + review)
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &1, &review, &t.ledger(), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &1,
+            &review,
+            &t.ledger(),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -173,8 +194,14 @@ fn test_create_plan_rejects_deadline_before_review_window() {
     // deadline == current + review; must be strictly greater
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &1, &review,
-            &(t.ledger() + review), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &1,
+            &review,
+            &(t.ledger() + review),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -188,8 +215,14 @@ fn test_create_plan_rejects_review_window_below_minimum() {
     let short_window = MIN_REVIEW_WINDOW_LEDGERS - 1;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &1, &short_window,
-            &(t.ledger() + MIN_REVIEW_WINDOW_LEDGERS + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &1,
+            &short_window,
+            &(t.ledger() + MIN_REVIEW_WINDOW_LEDGERS + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -203,8 +236,14 @@ fn test_create_plan_learner_is_mentor_fails() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.learner, &t.token, &100, &1, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.learner,
+            &t.token,
+            &100,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -218,8 +257,14 @@ fn test_create_plan_mentor_is_forfeit_fails() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &1, &review,
-            &(t.ledger() + review + 1_000), &t.mentor,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.mentor,
         )
         .unwrap_err()
         .unwrap();
@@ -233,8 +278,14 @@ fn test_create_plan_zero_milestones_fails() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &0, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &0,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -248,8 +299,14 @@ fn test_create_plan_thirteen_milestones_fails() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &13, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &13,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -382,8 +439,14 @@ fn test_exploit_tiny_window_blocked_by_minimum() {
     let short = MIN_REVIEW_WINDOW_LEDGERS - 1;
     let err = client
         .try_create_plan(
-            &t.learner, &t.mentor, &t.token, &300, &3, &short,
-            &(t.ledger() + MIN_REVIEW_WINDOW_LEDGERS + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &300,
+            &3,
+            &short,
+            &(t.ledger() + MIN_REVIEW_WINDOW_LEDGERS + 1_000),
+            &t.forfeit,
         )
         .unwrap_err()
         .unwrap();
@@ -452,8 +515,14 @@ fn test_create_plan_twelve_milestones_ok() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let id = client
         .create_plan(
-            &t.learner, &t.mentor, &t.token, &120, &12, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &120,
+            &12,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap();
     let plan = client.get_plan(&id).unwrap();
@@ -474,8 +543,14 @@ fn test_rounding_remainder_on_last_milestone() {
     // 10 / 3 = 3 remainder 1
     let id = client
         .create_plan(
-            &t.learner, &t.mentor, &t.token, &10, &3, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &10,
+            &3,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap();
     let plan = client.get_plan(&id).unwrap();
@@ -492,8 +567,14 @@ fn test_rounding_seven_milestones() {
     // 100 / 7 = 14 r 2
     let id = client
         .create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &7, &review,
-            &(t.ledger() + review + 1_000), &t.forfeit,
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &7,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
         )
         .unwrap();
     let plan = client.get_plan(&id).unwrap();
@@ -514,19 +595,37 @@ fn test_payout_never_exceeds_stake() {
 
     // Test stake/count combinations that exercise rounding edge-cases.
     let cases: &[(i128, u32)] = &[
-        (1, 1), (1, 3), (2, 3), (7, 3), (10, 3), (10, 7), (100, 12),
-        (999, 7), (1000, 3), (1001, 12), (100_000, 1), (100_000, 12),
+        (1, 1),
+        (1, 3),
+        (2, 3),
+        (7, 3),
+        (10, 3),
+        (10, 7),
+        (100, 12),
+        (999, 7),
+        (1000, 3),
+        (1001, 12),
+        (100_000, 1),
+        (100_000, 12),
     ];
 
     for (stake, count) in cases {
         let id = client
             .create_plan(
-                &t.learner, &t.mentor, &t.token, stake, count, &review,
-                &(t.ledger() + review + 10_000), &t.forfeit,
+                &t.learner,
+                &t.mentor,
+                &t.token,
+                stake,
+                count,
+                &review,
+                &(t.ledger() + review + 10_000),
+                &t.forfeit,
             )
             .unwrap();
         let plan = client.get_plan(&id).unwrap();
-        let total: i128 = (0..*count).map(|i| plan.milestones.get(i).unwrap().share).sum();
+        let total: i128 = (0..*count)
+            .map(|i| plan.milestones.get(i).unwrap().share)
+            .sum();
         assert_eq!(
             total, *stake,
             "stake={stake} count={count}: shares summed to {total}"
@@ -545,7 +644,10 @@ fn test_submit_milestone_success() {
     let id = t.active_plan(&client);
     client.submit_milestone(&id, &0).unwrap();
     let plan = client.get_plan(&id).unwrap();
-    assert_eq!(plan.milestones.get(0).unwrap().status, MilestoneStatus::Submitted);
+    assert_eq!(
+        plan.milestones.get(0).unwrap().status,
+        MilestoneStatus::Submitted
+    );
 }
 
 #[test]
@@ -589,7 +691,10 @@ fn test_verify_milestone_pays_learner() {
     client.submit_milestone(&id, &0).unwrap();
     client.verify_milestone(&id, &0).unwrap();
     let plan = client.get_plan(&id).unwrap();
-    assert_eq!(plan.milestones.get(0).unwrap().status, MilestoneStatus::Verified);
+    assert_eq!(
+        plan.milestones.get(0).unwrap().status,
+        MilestoneStatus::Verified
+    );
     assert_eq!(t.token_balance(&t.learner), before + 100);
 }
 
@@ -636,10 +741,19 @@ fn test_reject_then_resubmit() {
     client.submit_milestone(&id, &0).unwrap();
     client.reject_milestone(&id, &0).unwrap();
     let plan = client.get_plan(&id).unwrap();
-    assert_eq!(plan.milestones.get(0).unwrap().status, MilestoneStatus::Pending);
+    assert_eq!(
+        plan.milestones.get(0).unwrap().status,
+        MilestoneStatus::Pending
+    );
     client.submit_milestone(&id, &0).unwrap();
     assert_eq!(
-        client.get_plan(&id).unwrap().milestones.get(0).unwrap().status,
+        client
+            .get_plan(&id)
+            .unwrap()
+            .milestones
+            .get(0)
+            .unwrap()
+            .status,
         MilestoneStatus::Submitted
     );
 }
@@ -689,7 +803,13 @@ fn test_claim_unreviewed_success() {
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 1);
     client.claim_unreviewed(&id, &0).unwrap();
     assert_eq!(
-        client.get_plan(&id).unwrap().milestones.get(0).unwrap().status,
+        client
+            .get_plan(&id)
+            .unwrap()
+            .milestones
+            .get(0)
+            .unwrap()
+            .status,
         MilestoneStatus::Verified
     );
     assert_eq!(t.token_balance(&t.learner), before + 100);
@@ -740,7 +860,13 @@ fn test_forfeit_milestone_pays_recipient() {
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
     client.forfeit_milestone(&id, &0).unwrap();
     assert_eq!(
-        client.get_plan(&id).unwrap().milestones.get(0).unwrap().status,
+        client
+            .get_plan(&id)
+            .unwrap()
+            .milestones
+            .get(0)
+            .unwrap()
+            .status,
         MilestoneStatus::Forfeited
     );
     assert_eq!(t.token_balance(&t.forfeit), before + 100);
@@ -790,7 +916,9 @@ fn test_plan_completes_when_all_done() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
     let id = client
-        .create_plan(&t.learner, &t.mentor, &t.token, &200, &2, &review, &deadline, &t.forfeit)
+        .create_plan(
+            &t.learner, &t.mentor, &t.token, &200, &2, &review, &deadline, &t.forfeit,
+        )
         .unwrap();
     client.accept_plan(&id).unwrap();
     client.submit_milestone(&id, &0).unwrap();
@@ -807,7 +935,9 @@ fn test_actions_on_completed_plan_fail() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
     let id = client
-        .create_plan(&t.learner, &t.mentor, &t.token, &100, &1, &review, &deadline, &t.forfeit)
+        .create_plan(
+            &t.learner, &t.mentor, &t.token, &100, &1, &review, &deadline, &t.forfeit,
+        )
         .unwrap();
     client.accept_plan(&id).unwrap();
     client.submit_milestone(&id, &0).unwrap();
@@ -822,7 +952,16 @@ fn test_single_milestone_plan_completes() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let id = client
-        .create_plan(&t.learner, &t.mentor, &t.token, &50, &1, &review, &(t.ledger() + review + 1_000), &t.forfeit)
+        .create_plan(
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &50,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
+        )
         .unwrap();
     client.accept_plan(&id).unwrap();
     client.submit_milestone(&id, &0).unwrap();
@@ -899,7 +1038,9 @@ fn test_mixed_verify_forfeit_completes() {
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
     let id = client
-        .create_plan(&t.learner, &t.mentor, &t.token, &300, &3, &review, &deadline, &t.forfeit)
+        .create_plan(
+            &t.learner, &t.mentor, &t.token, &300, &3, &review, &deadline, &t.forfeit,
+        )
         .unwrap();
     client.accept_plan(&id).unwrap();
     client.submit_milestone(&id, &0).unwrap();
@@ -927,7 +1068,10 @@ fn test_event_plan_created() {
     assert_eq!(t.env.events().all().len(), 0);
     let _id = t.awaiting_plan(&client);
     // After creation: at least one event (PlanCreated).
-    assert!(t.env.events().all().len() >= 1, "no events after create_plan");
+    assert!(
+        t.env.events().all().len() >= 1,
+        "no events after create_plan"
+    );
 }
 
 #[test]
@@ -991,7 +1135,10 @@ fn test_event_milestone_rejected() {
     let before_count = t.env.events().all().len();
     client.reject_milestone(&id, &0).unwrap();
     let after_count = t.env.events().all().len();
-    assert!(after_count > before_count, "no new events after reject_milestone");
+    assert!(
+        after_count > before_count,
+        "no new events after reject_milestone"
+    );
 }
 
 #[test]
@@ -1004,7 +1151,10 @@ fn test_event_milestone_auto_released() {
     let before_count = t.env.events().all().len();
     client.claim_unreviewed(&id, &0).unwrap();
     let after_count = t.env.events().all().len();
-    assert!(after_count > before_count, "no new events after claim_unreviewed");
+    assert!(
+        after_count > before_count,
+        "no new events after claim_unreviewed"
+    );
 }
 
 #[test]
@@ -1016,7 +1166,10 @@ fn test_event_milestone_forfeited() {
     let before_count = t.env.events().all().len();
     client.forfeit_milestone(&id, &0).unwrap();
     let after_count = t.env.events().all().len();
-    assert!(after_count > before_count, "no new events after forfeit_milestone");
+    assert!(
+        after_count > before_count,
+        "no new events after forfeit_milestone"
+    );
 }
 
 #[test]
@@ -1025,7 +1178,16 @@ fn test_event_plan_completed() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let id = client
-        .create_plan(&t.learner, &t.mentor, &t.token, &100, &1, &review, &(t.ledger() + review + 1_000), &t.forfeit)
+        .create_plan(
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            &100,
+            &1,
+            &review,
+            &(t.ledger() + review + 1_000),
+            &t.forfeit,
+        )
         .unwrap();
     client.accept_plan(&id).unwrap();
     client.submit_milestone(&id, &0).unwrap();
@@ -1049,5 +1211,8 @@ fn test_event_plan_extended() {
     let before_count = t.env.events().all().len();
     client.extend_plan(&id).unwrap();
     let after_count = t.env.events().all().len();
-    assert!(after_count > before_count, "no new events after extend_plan");
+    assert!(
+        after_count > before_count,
+        "no new events after extend_plan"
+    );
 }
