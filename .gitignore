@@ -1,16 +1,22 @@
-# Rust / Cargo
+# Rust / Cargo build output
 target/
-Cargo.lock
 
 # Node / webapp
 webapp/node_modules/
 webapp/dist/
 webapp/.env
 
-# IDE
+# Environment secrets (never commit)
+.env
+*.env.local
+
+# IDE and editor directories
 .vscode/
 .idea/
 
-# OS
+# Kiro IDE session data
+.kiro/
+
+# OS-generated files
 .DS_Store
 Thumbs.db
