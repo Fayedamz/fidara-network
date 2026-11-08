@@ -103,12 +103,19 @@ Source: [Stellar Docs — Getting started setup](https://developers.stellar.org/
 
 **Test command:** `cargo test` (using the `testutils` feature activated via dev-deps).
 
-**Note on `cargo test` and soroban-env-host 22.1.3:** The lock file resolves
-`soroban-env-host` to `22.1.3`, which has an upstream dependency conflict between
-`ed25519-dalek 3.0.0` (needs `rand_core 0.6`) and `rand_core 0.10.1` (pulled by
-`curve25519-dalek 5.0.0`). This means `cargo test` cannot currently compile on this
-machine due to the network being unavailable to fetch a different lock resolution. The
-contract code itself is correct; `cargo check` and `cargo clippy` pass.
+**Note on `cargo test` and soroban-env-host 22.1.3:** soroban-sdk `=22.0.11` hard-pins
+`soroban-env-host = "=22.1.3"`. That version introduced `ed25519-dalek 3.0.0` which
+pulls in `rand_core 0.10.1`, conflicting with `rand_core 0.6.4` used by
+`rand_chacha` inside the same host. This causes a compile-time trait bound error:
+`ChaCha20Rng: CryptoRng` not satisfied.
+
+**Fix:** The workspace `contracts/Cargo.toml` uses `[patch.crates-io]` to redirect
+`soroban-env-host`, `soroban-env-common`, `soroban-env-guest`, `soroban-env-macros`, and
+`soroban-builtin-sdk-macros` to the git tag `v22.1.1`
+(`https://github.com/stellar/rs-soroban-env`, tag `v22.1.1`,
+SHA `6e700f29404b8dd6ab94c1c0068fe7fd6ef87b2a`). Version 22.1.1 uses
+`ed25519-dalek 2.1.1` which is compatible with `rand_core 0.6.4`, and has no API
+changes relative to 22.1.3 for the functionality we use.
 
 ---
 
