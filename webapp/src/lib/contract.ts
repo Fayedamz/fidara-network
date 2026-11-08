@@ -173,6 +173,24 @@ export async function extendPlan(
   ]);
 }
 
+export async function acceptPlan(
+  callerPublicKey: string,
+  planId: bigint
+): Promise<void> {
+  await invokeContract(callerPublicKey, "accept_plan", [
+    nativeToScVal(planId, { type: "u64" }),
+  ]);
+}
+
+export async function cancelPlan(
+  callerPublicKey: string,
+  planId: bigint
+): Promise<void> {
+  await invokeContract(callerPublicKey, "cancel_plan", [
+    nativeToScVal(planId, { type: "u64" }),
+  ]);
+}
+
 /** Read plan state — uses a read-only simulation (no signing required). */
 export async function getPlan(planId: bigint): Promise<Plan> {
   const contract = new Contract(CONTRACT_ID);
@@ -243,7 +261,13 @@ function scValToPlan(val: xdr.ScVal): Plan {
     review_window_ledgers: get("review_window_ledgers").u32(),
     forfeit_recipient: Address.fromScVal(get("forfeit_recipient")).toString(),
     // PlanStatus is a Soroban enum — the SCVal is a vec with one sym entry.
-    status: get("status").vec()?.[0].sym() === "Completed" ? "Completed" : "Active",
+    status: ((): import("../types/contract").PlanStatus => {
+      const sym = get("status").vec()?.[0].sym() ?? "AwaitingMentor";
+      if (sym === "Completed") return "Completed";
+      if (sym === "Cancelled") return "Cancelled";
+      if (sym === "Active") return "Active";
+      return "AwaitingMentor";
+    })(),
     milestones: milestonesVec.map(scValToMilestone),
   };
 }

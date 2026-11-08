@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../hooks/useWallet";
-import { getPlan, submitMilestone, claimUnreviewed, forfeitMilestone } from "../lib/contract";
+import {
+  getPlan,
+  submitMilestone,
+  claimUnreviewed,
+  forfeitMilestone,
+  cancelPlan,
+} from "../lib/contract";
 import { formatLedgerWithDate } from "../lib/ledger";
 import { MilestoneRow } from "../components/MilestoneRow";
 import type { Plan } from "../types/contract";
@@ -67,7 +73,16 @@ export function LearnerDashboard() {
     );
   }
 
+  function handleCancel() {
+    doAction(
+      () => cancelPlan(wallet.publicKey!, BigInt(planIdInput)),
+      "Plan cancelled — full stake refunded to learner."
+    );
+  }
+
   const isLearner = plan && wallet.publicKey === plan.learner;
+  const isActive = plan?.status === "Active";
+  const isAwaiting = plan?.status === "AwaitingMentor";
 
   return (
     <main className="page page-learner">
@@ -101,8 +116,8 @@ export function LearnerDashboard() {
           <dl className="plan-meta">
             <dt>Status</dt>
             <dd>
-              <span className={`badge badge-${plan.status.toLowerCase()}`}>
-                {plan.status}
+              <span className={`badge badge-${plan.status.toLowerCase().replace(/\s/g, "-")}`}>
+                {plan.status === "AwaitingMentor" ? "Awaiting Mentor" : plan.status}
               </span>
             </dd>
             <dt>Learner</dt>
@@ -117,38 +132,98 @@ export function LearnerDashboard() {
             <dd>{formatLedgerWithDate(plan.deadline_ledger)}</dd>
           </dl>
 
-          {!isLearner && wallet.connected && (
+          {isAwaiting && (
+            <div className="status-banner banner-awaiting" role="status">
+              <strong>Awaiting mentor acceptance.</strong> Milestone actions are
+              disabled until your mentor accepts this plan. Share plan ID{" "}
+              <strong>{plan.id.toString()}</strong> with your mentor ({plan.mentor}).
+              {isLearner && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <button
+                    onClick={handleCancel}
+                    disabled={loading}
+                    className="btn-reject"
+                    aria-label="Cancel plan and refund stake"
+                  >
+                    Cancel plan and refund stake
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {plan.status === "Cancelled" && (
+            <p className="notice" role="note">
+              This plan was cancelled. The full stake has been refunded to the learner.
+            </p>
+          )}
+
+          {plan.status === "Completed" && (
+            <p className="success" role="status">
+              This plan is completed. All milestones have been resolved.
+            </p>
+          )}
+
+          {!isLearner && wallet.connected && isActive && (
             <p className="notice" role="note">
               Your wallet is not the learner for this plan. You can still claim
               unreviewed milestones or forfeit missed ones.
             </p>
           )}
 
-          <table aria-label="Milestones">
-            <thead>
-              <tr>
-                <th scope="col">Milestone</th>
-                <th scope="col">Status</th>
-                <th scope="col">Share</th>
-                <th scope="col">Review Deadline</th>
-                <th scope="col">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.milestones.map((m, i) => (
-                <MilestoneRow
-                  key={i}
-                  index={i}
-                  milestone={m}
-                  reviewWindowLedgers={plan.review_window_ledgers}
-                  onSubmit={isLearner ? handleSubmit : undefined}
-                  onClaimUnreviewed={handleClaimUnreviewed}
-                  onForfeit={handleForfeit}
-                  loading={loading}
-                />
-              ))}
-            </tbody>
-          </table>
+          {(isActive || plan.status === "Completed") && (
+            <table aria-label="Milestones">
+              <thead>
+                <tr>
+                  <th scope="col">Milestone</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Share</th>
+                  <th scope="col">Review Deadline</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.milestones.map((m, i) => (
+                  <MilestoneRow
+                    key={i}
+                    index={i}
+                    milestone={m}
+                    reviewWindowLedgers={plan.review_window_ledgers}
+                    onSubmit={isLearner && isActive ? handleSubmit : undefined}
+                    onClaimUnreviewed={isActive ? handleClaimUnreviewed : undefined}
+                    onForfeit={isActive ? handleForfeit : undefined}
+                    loading={loading}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {isAwaiting && (
+            <table aria-label="Milestones (locked — awaiting mentor)">
+              <thead>
+                <tr>
+                  <th scope="col">Milestone</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Share</th>
+                  <th scope="col">Review Deadline</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.milestones.map((m, i) => (
+                  <MilestoneRow
+                    key={i}
+                    index={i}
+                    milestone={m}
+                    reviewWindowLedgers={plan.review_window_ledgers}
+                    // No action handlers — plan not yet Active
+                    loading={loading}
+                  />
+                ))}
+              </tbody>
+            </table>
+          )}
 
           {actionStatus && (
             <p

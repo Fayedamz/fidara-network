@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 export type MilestoneStatus = "Pending" | "Submitted" | "Verified" | "Forfeited";
-export type PlanStatus = "Active" | "Completed";
+export type PlanStatus = "AwaitingMentor" | "Active" | "Completed" | "Cancelled";
 
 export interface Milestone {
   status: MilestoneStatus;
@@ -35,3 +35,6 @@ export interface CreatePlanParams {
   deadlineLedger: number;
   forfeitRecipient: string;
 }
+
+/** Minimum review window in ledgers (1 day ≈ 17 280 ledgers at 5 s/ledger). */
+export const MIN_REVIEW_WINDOW_LEDGERS = 17_280;
