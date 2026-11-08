@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Vec};
+use soroban_sdk::{contract, contractevent, contractimpl, token, Address, Env, Vec};
 
 use crate::{
     errors::FidaraError,
@@ -12,6 +12,74 @@ use crate::{
 /// 1 day = 86 400 s ÷ 5 s/ledger = 17 280 ledgers.
 /// See docs/DECISIONS.md §D-001.
 pub const MIN_REVIEW_WINDOW_LEDGERS: u32 = 17_280;
+
+// =========================================================================
+// Events — one per state-changing transition
+// =========================================================================
+
+/// Emitted by create_plan.
+#[contractevent(topics = ["fidara", "plan_created"], data_format = "single-value")]
+pub struct PlanCreated {
+    pub plan_id: u64,
+}
+
+/// Emitted by accept_plan.
+#[contractevent(topics = ["fidara", "plan_accepted"], data_format = "single-value")]
+pub struct PlanAccepted {
+    pub plan_id: u64,
+}
+
+/// Emitted by cancel_plan.
+#[contractevent(topics = ["fidara", "plan_cancelled"], data_format = "single-value")]
+pub struct PlanCancelled {
+    pub plan_id: u64,
+}
+
+/// Emitted by maybe_complete when all milestones are terminal.
+#[contractevent(topics = ["fidara", "plan_completed"], data_format = "single-value")]
+pub struct PlanCompleted {
+    pub plan_id: u64,
+}
+
+/// Emitted by extend_plan.
+#[contractevent(topics = ["fidara", "plan_extended"], data_format = "single-value")]
+pub struct PlanExtended {
+    pub plan_id: u64,
+}
+
+/// Emitted by submit_milestone.
+#[contractevent(topics = ["fidara", "milestone_submitted"], data_format = "single-value")]
+pub struct MilestoneSubmitted {
+    pub plan_id: u64,
+}
+
+/// Emitted by verify_milestone.
+#[contractevent(topics = ["fidara", "milestone_verified"], data_format = "single-value")]
+pub struct MilestoneVerified {
+    pub plan_id: u64,
+}
+
+/// Emitted by reject_milestone.
+#[contractevent(topics = ["fidara", "milestone_rejected"], data_format = "single-value")]
+pub struct MilestoneRejected {
+    pub plan_id: u64,
+}
+
+/// Emitted by claim_unreviewed (auto-release after mentor silence).
+#[contractevent(topics = ["fidara", "milestone_auto_released"], data_format = "single-value")]
+pub struct MilestoneAutoReleased {
+    pub plan_id: u64,
+}
+
+/// Emitted by forfeit_milestone.
+#[contractevent(topics = ["fidara", "milestone_forfeited"], data_format = "single-value")]
+pub struct MilestoneForfeited {
+    pub plan_id: u64,
+}
+
+// =========================================================================
+// Contract
+// =========================================================================
 
 #[contract]
 pub struct FidaraContract;
@@ -112,6 +180,8 @@ impl FidaraContract {
         storage::set_next_id(&env, id + 1);
         storage::extend_instance_ttl(&env);
 
+        PlanCreated { plan_id: id }.publish(&env);
+
         Ok(id)
     }
 
@@ -141,13 +211,14 @@ impl FidaraContract {
         plan.status = PlanStatus::Active;
         storage::save_plan(&env, &plan);
 
+        PlanAccepted { plan_id }.publish(&env);
+
         Ok(())
     }
 
     /// Learner cancels the plan while it is still awaiting mentor acceptance.
     ///
-    /// The full stake is refunded to the learner. This is the learner's
-    /// protection against a mentor who never accepts.
+    /// The full stake is refunded to the learner.
     ///
     /// # Errors
     /// - `PlanNotFound` if the plan does not exist
@@ -175,6 +246,8 @@ impl FidaraContract {
             &learner,
             &stake,
         );
+
+        PlanCancelled { plan_id }.publish(&env);
 
         Ok(())
     }
@@ -210,6 +283,9 @@ impl FidaraContract {
         Self::set_milestone(&mut plan, index, milestone);
 
         storage::save_plan(&env, &plan);
+
+        MilestoneSubmitted { plan_id }.publish(&env);
+
         Ok(())
     }
 
@@ -235,7 +311,7 @@ impl FidaraContract {
         let token = plan.token.clone();
 
         Self::set_milestone(&mut plan, index, milestone);
-        Self::maybe_complete(&mut plan);
+        Self::maybe_complete_and_emit(&env, plan_id, &mut plan);
         storage::save_plan(&env, &plan);
 
         // Stake share goes to the learner — never to the mentor.
@@ -244,6 +320,8 @@ impl FidaraContract {
             &learner,
             &share,
         );
+
+        MilestoneVerified { plan_id }.publish(&env);
 
         Ok(())
     }
@@ -276,6 +354,9 @@ impl FidaraContract {
         Self::set_milestone(&mut plan, index, milestone);
 
         storage::save_plan(&env, &plan);
+
+        MilestoneRejected { plan_id }.publish(&env);
+
         Ok(())
     }
 
@@ -307,7 +388,7 @@ impl FidaraContract {
         let token = plan.token.clone();
 
         Self::set_milestone(&mut plan, index, milestone);
-        Self::maybe_complete(&mut plan);
+        Self::maybe_complete_and_emit(&env, plan_id, &mut plan);
         storage::save_plan(&env, &plan);
 
         token::Client::new(&env, &token).transfer(
@@ -315,6 +396,8 @@ impl FidaraContract {
             &learner,
             &share,
         );
+
+        MilestoneAutoReleased { plan_id }.publish(&env);
 
         Ok(())
     }
@@ -347,7 +430,7 @@ impl FidaraContract {
         let token = plan.token.clone();
 
         Self::set_milestone(&mut plan, index, milestone);
-        Self::maybe_complete(&mut plan);
+        Self::maybe_complete_and_emit(&env, plan_id, &mut plan);
         storage::save_plan(&env, &plan);
 
         // Stake share goes to the forfeit recipient — never to the mentor.
@@ -356,6 +439,8 @@ impl FidaraContract {
             &recipient,
             &share,
         );
+
+        MilestoneForfeited { plan_id }.publish(&env);
 
         Ok(())
     }
@@ -369,6 +454,9 @@ impl FidaraContract {
         storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)?;
         storage::extend_plan_ttl(&env, plan_id);
         storage::extend_instance_ttl(&env);
+
+        PlanExtended { plan_id }.publish(&env);
+
         Ok(())
     }
 
@@ -389,7 +477,7 @@ impl FidaraContract {
         Ok(plan)
     }
 
-    /// Section 2: replaced unwrap() with a proper error return.
+    /// Returns the milestone at index, or InvalidMilestoneIndex — no unwrap.
     fn get_milestone(plan: &Plan, index: u32) -> Result<Milestone, FidaraError> {
         if index >= plan.milestone_count {
             return Err(FidaraError::InvalidMilestoneIndex);
@@ -404,13 +492,14 @@ impl FidaraContract {
         plan.milestones.set(index, milestone);
     }
 
-    /// Mark the plan Completed once every milestone reaches a terminal state.
-    fn maybe_complete(plan: &mut Plan) {
+    /// Mark the plan Completed and emit PlanCompleted if all milestones are terminal.
+    fn maybe_complete_and_emit(env: &Env, plan_id: u64, plan: &mut Plan) {
         let all_done = plan.milestones.iter().all(|m| {
             m.status == MilestoneStatus::Verified || m.status == MilestoneStatus::Forfeited
         });
         if all_done {
             plan.status = PlanStatus::Completed;
+            PlanCompleted { plan_id }.publish(env);
         }
     }
 }
