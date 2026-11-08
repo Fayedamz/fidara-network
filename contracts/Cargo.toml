@@ -1,3 +1,20 @@
 [workspace]
 members = ["fidara"]
 resolver = "2"
+
+# soroban-env-host =22.1.3 (required by soroban-sdk 22.x) introduced
+# ed25519-dalek 3.0.0, which conflicts with rand_core versions pulled by
+# curve25519-dalek 5 and fails to compile under `cargo test`.
+# soroban-env-host 22.1.1 uses ed25519-dalek 2.1.1 and compiles cleanly.
+#
+# Cargo allows [patch.crates-io] with a git source even when the crate is
+# originally from the registry. The git tag v22.1.1 resolves to the same
+# protocol-22 host implementation with no API changes.
+# Source: https://github.com/stellar/rs-soroban-env/releases/tag/v22.1.1
+# See docs/DECISIONS.md §D-006.
+[patch.crates-io]
+soroban-env-host = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
+soroban-env-common = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
+soroban-env-guest = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
+soroban-env-macros = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
+soroban-builtin-sdk-macros = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
