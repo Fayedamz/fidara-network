@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Vec};
 
 use crate::{
     errors::FidaraError,
@@ -6,22 +6,33 @@ use crate::{
     types::{Milestone, MilestoneStatus, Plan, PlanStatus},
 };
 
-// soroban_sdk::Vec is accessed via the prelude inside the contract body.
-use soroban_sdk::Vec;
+/// Minimum review window the mentor must have to assess a submission.
+///
+/// Source: Stellar Developer Docs confirm ledgers close in ~5 seconds.
+/// 1 day = 86 400 s ÷ 5 s/ledger = 17 280 ledgers.
+/// See docs/DECISIONS.md §D-001.
+pub const MIN_REVIEW_WINDOW_LEDGERS: u32 = 17_280;
 
 #[contract]
 pub struct FidaraContract;
 
 #[contractimpl]
 impl FidaraContract {
+    // =========================================================================
+    // Plan lifecycle
+    // =========================================================================
+
     /// Create a new commitment plan.
     ///
-    /// The learner authorises and the stake is transferred from them into the
-    /// contract. Each milestone receives an equal share; the rounding remainder
-    /// is added to the last milestone.
+    /// Transfers `stake_amount` from the learner into the contract; the plan is
+    /// created in `AwaitingMentor` status. The mentor must call `accept_plan`
+    /// before any milestone work can begin.
     ///
     /// # Errors
+    /// - `InvalidStakeAmount` if stake_amount ≤ 0
     /// - `InvalidMilestoneCount` if count < 1 or > 12
+    /// - `ReviewWindowTooShort` if review_window_ledgers < MIN_REVIEW_WINDOW_LEDGERS
+    /// - `InvalidDeadline` if deadline_ledger ≤ current_ledger + review_window_ledgers
     /// - `LearnerIsMentor` if learner == mentor
     /// - `MentorIsForfeitRecipient` if mentor == forfeit_recipient
     pub fn create_plan(
@@ -35,12 +46,22 @@ impl FidaraContract {
         deadline_ledger: u32,
         forfeit_recipient: Address,
     ) -> Result<u64, FidaraError> {
-        // Require auth first, before any validation work.
+        // Auth first.
         learner.require_auth();
 
         // --- validation -------------------------------------------------------
+        if stake_amount <= 0 {
+            return Err(FidaraError::InvalidStakeAmount);
+        }
         if milestone_count < 1 || milestone_count > 12 {
             return Err(FidaraError::InvalidMilestoneCount);
+        }
+        if review_window_ledgers < MIN_REVIEW_WINDOW_LEDGERS {
+            return Err(FidaraError::ReviewWindowTooShort);
+        }
+        let current_ledger = env.ledger().sequence();
+        if deadline_ledger <= current_ledger.saturating_add(review_window_ledgers) {
+            return Err(FidaraError::InvalidDeadline);
         }
         if learner == mentor {
             return Err(FidaraError::LearnerIsMentor);
@@ -75,15 +96,15 @@ impl FidaraContract {
         let id = storage::get_next_id(&env);
         let plan = Plan {
             id,
-            learner,
-            mentor,
-            token,
+            learner: learner.clone(),
+            mentor: mentor.clone(),
+            token: token.clone(),
             stake_amount,
             milestone_count,
             deadline_ledger,
             review_window_ledgers,
-            forfeit_recipient,
-            status: PlanStatus::Active,
+            forfeit_recipient: forfeit_recipient.clone(),
+            status: PlanStatus::AwaitingMentor,
             milestones,
         };
 
@@ -93,6 +114,74 @@ impl FidaraContract {
 
         Ok(id)
     }
+
+    /// Mentor accepts the plan terms, making it Active.
+    ///
+    /// By accepting, the mentor agrees to the review window and deadline set by
+    /// the learner. Milestone operations are blocked until this is called.
+    ///
+    /// # Errors
+    /// - `PlanNotFound` if the plan does not exist
+    /// - `PlanNotAwaitingMentor` if the plan is not in AwaitingMentor status
+    /// - `DeadlinePassed` if the deadline has already passed
+    pub fn accept_plan(env: Env, plan_id: u64) -> Result<(), FidaraError> {
+        let mut plan = storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)?;
+
+        // Auth: only the named mentor may accept.
+        plan.mentor.require_auth();
+
+        if plan.status != PlanStatus::AwaitingMentor {
+            return Err(FidaraError::PlanNotAwaitingMentor);
+        }
+        let current_ledger = env.ledger().sequence();
+        if current_ledger > plan.deadline_ledger {
+            return Err(FidaraError::DeadlinePassed);
+        }
+
+        plan.status = PlanStatus::Active;
+        storage::save_plan(&env, &plan);
+
+        Ok(())
+    }
+
+    /// Learner cancels the plan while it is still awaiting mentor acceptance.
+    ///
+    /// The full stake is refunded to the learner. This is the learner's
+    /// protection against a mentor who never accepts.
+    ///
+    /// # Errors
+    /// - `PlanNotFound` if the plan does not exist
+    /// - `PlanNotAwaitingMentor` if the plan is not in AwaitingMentor status
+    pub fn cancel_plan(env: Env, plan_id: u64) -> Result<(), FidaraError> {
+        let mut plan = storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)?;
+
+        // Auth: only the learner may cancel.
+        plan.learner.require_auth();
+
+        if plan.status != PlanStatus::AwaitingMentor {
+            return Err(FidaraError::PlanNotAwaitingMentor);
+        }
+
+        plan.status = PlanStatus::Cancelled;
+        let learner = plan.learner.clone();
+        let stake = plan.stake_amount;
+        let token = plan.token.clone();
+
+        storage::save_plan(&env, &plan);
+
+        // Refund the full stake to the learner.
+        token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &learner,
+            &stake,
+        );
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Milestone operations — all require Active status
+    // =========================================================================
 
     /// Learner submits a milestone for review.
     ///
@@ -193,8 +282,7 @@ impl FidaraContract {
     /// Anyone can call this once the review window has passed and the milestone
     /// is still Submitted. Pays the share to the learner.
     ///
-    /// A silent or inactive mentor can never trap the stake indefinitely — any
-    /// address can call this function after the window expires.
+    /// A silent or inactive mentor can never trap the stake indefinitely.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
@@ -234,8 +322,7 @@ impl FidaraContract {
     /// Anyone can forfeit a milestone that was never submitted, once the
     /// deadline has passed. Pays the share to the forfeit_recipient.
     ///
-    /// A Submitted milestone cannot be forfeited — use `claim_unreviewed` for
-    /// that case.
+    /// A Submitted milestone cannot be forfeited — use `claim_unreviewed`.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
@@ -273,8 +360,11 @@ impl FidaraContract {
         Ok(())
     }
 
-    /// Bump the TTL of a plan to keep it alive on-ledger.
-    /// Anyone can call this.
+    // =========================================================================
+    // Utility — work for any plan status
+    // =========================================================================
+
+    /// Bump the TTL of a plan to keep it alive on-ledger. Anyone can call this.
     pub fn extend_plan(env: Env, plan_id: u64) -> Result<(), FidaraError> {
         storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)?;
         storage::extend_plan_ttl(&env, plan_id);
@@ -282,14 +372,14 @@ impl FidaraContract {
         Ok(())
     }
 
-    /// Return the full plan struct (read-only).
+    /// Return the full plan struct (read-only). Works for any plan status.
     pub fn get_plan(env: Env, plan_id: u64) -> Result<Plan, FidaraError> {
         storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Private helpers
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     fn require_active_plan(env: &Env, plan_id: u64) -> Result<Plan, FidaraError> {
         let plan = storage::load_plan(env, plan_id).ok_or(FidaraError::PlanNotFound)?;
@@ -299,15 +389,17 @@ impl FidaraContract {
         Ok(plan)
     }
 
+    /// Section 2: replaced unwrap() with a proper error return.
     fn get_milestone(plan: &Plan, index: u32) -> Result<Milestone, FidaraError> {
         if index >= plan.milestone_count {
             return Err(FidaraError::InvalidMilestoneIndex);
         }
-        Ok(plan.milestones.get(index).unwrap())
+        plan.milestones
+            .get(index)
+            .ok_or(FidaraError::InvalidMilestoneIndex)
     }
 
-    /// Update a milestone in the plan's vec. The index is always pre-validated
-    /// by `get_milestone` before this is called, so the bound check is omitted.
+    /// Update a milestone in the plan's vec. Index is pre-validated by get_milestone.
     fn set_milestone(plan: &mut Plan, index: u32, milestone: Milestone) {
         plan.milestones.set(index, milestone);
     }

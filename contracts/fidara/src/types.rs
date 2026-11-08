@@ -4,8 +4,15 @@ use soroban_sdk::{contracttype, Address};
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
 pub enum PlanStatus {
+    /// Created by learner; waiting for the mentor to accept the terms.
+    /// Milestone actions are blocked in this state.
+    AwaitingMentor,
+    /// Mentor accepted. Milestones may be submitted, reviewed, and forfeited.
     Active,
+    /// All milestones reached a terminal state (Verified or Forfeited).
     Completed,
+    /// Learner cancelled before the mentor accepted. Full stake was refunded.
+    Cancelled,
 }
 
 /// Per-milestone state machine.
@@ -46,6 +53,7 @@ pub struct Plan {
     /// Ledger number after which no new submissions are accepted.
     pub deadline_ledger: u32,
     /// How many ledgers the mentor has to review after a submission.
+    /// Must be >= MIN_REVIEW_WINDOW_LEDGERS.
     pub review_window_ledgers: u32,
     pub forfeit_recipient: Address,
     pub status: PlanStatus,

@@ -14,7 +14,7 @@ pub enum FidaraError {
     PlanNotFound = 4,
     /// The requested milestone index is out of range.
     InvalidMilestoneIndex = 5,
-    /// The plan is not in Active status.
+    /// The plan is not Active (required for milestone operations).
     PlanNotActive = 6,
     /// Caller is not the learner.
     NotLearner = 7,
@@ -32,4 +32,12 @@ pub enum FidaraError {
     DeadlineNotPassed = 13,
     /// The review window for rejection has closed.
     ReviewWindowClosed = 14,
+    /// stake_amount must be greater than zero.
+    InvalidStakeAmount = 15,
+    /// deadline_ledger must be in the future by at least review_window_ledgers.
+    InvalidDeadline = 16,
+    /// review_window_ledgers is below the minimum (MIN_REVIEW_WINDOW_LEDGERS).
+    ReviewWindowTooShort = 17,
+    /// The plan is not in AwaitingMentor status (required for accept/cancel).
+    PlanNotAwaitingMentor = 18,
 }
