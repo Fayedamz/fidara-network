@@ -1,0 +1,3 @@
+[workspace]
+members = ["fidara"]
+resolver = "2"

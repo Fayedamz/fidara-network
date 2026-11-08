@@ -1,0 +1,16 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# Node / webapp
+webapp/node_modules/
+webapp/dist/
+webapp/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
