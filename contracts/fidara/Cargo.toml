@@ -2,16 +2,17 @@
 name = "fidara"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.91.0"
 license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = { version = "22.0.1", features = [] }
+soroban-sdk = { version = "=22.0.11", features = [] }
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.1", features = ["testutils"] }
+soroban-sdk = { version = "=22.0.11", features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"

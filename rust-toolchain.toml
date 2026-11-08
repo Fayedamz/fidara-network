@@ -1,0 +1,6 @@
+[toolchain]
+# Minimum version required by soroban-sdk 22.x.
+# Source: rs-soroban-sdk Cargo.toml: rust-version = "1.91.0"
+# https://github.com/stellar/rs-soroban-sdk/blob/main/Cargo.toml
+channel = "1.93.0"
+targets = ["wasm32v1-none"]
