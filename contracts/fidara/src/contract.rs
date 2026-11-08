@@ -1,10 +1,13 @@
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 use crate::{
     errors::FidaraError,
     storage,
     types::{Milestone, MilestoneStatus, Plan, PlanStatus},
 };
+
+// soroban_sdk::Vec is accessed via the prelude inside the contract body.
+use soroban_sdk::Vec;
 
 #[contract]
 pub struct FidaraContract;
@@ -13,9 +16,9 @@ pub struct FidaraContract;
 impl FidaraContract {
     /// Create a new commitment plan.
     ///
-    /// Transfers `stake_amount` from the caller into the contract immediately.
-    /// Each milestone receives an equal share; any rounding remainder is added
-    /// to the last milestone.
+    /// The learner authorises and the stake is transferred from them into the
+    /// contract. Each milestone receives an equal share; the rounding remainder
+    /// is added to the last milestone.
     ///
     /// # Errors
     /// - `InvalidMilestoneCount` if count < 1 or > 12
@@ -32,6 +35,9 @@ impl FidaraContract {
         deadline_ledger: u32,
         forfeit_recipient: Address,
     ) -> Result<u64, FidaraError> {
+        // Require auth first, before any validation work.
+        learner.require_auth();
+
         // --- validation -------------------------------------------------------
         if milestone_count < 1 || milestone_count > 12 {
             return Err(FidaraError::InvalidMilestoneCount);
@@ -43,13 +49,9 @@ impl FidaraContract {
             return Err(FidaraError::MentorIsForfeitRecipient);
         }
 
-        // Caller (who holds the stake) must authorise the transfer.
-        let caller = learner.clone();
-        caller.require_auth();
-
         // --- stake transfer ---------------------------------------------------
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&caller, &env.current_contract_address(), &stake_amount);
+        token_client.transfer(&learner, &env.current_contract_address(), &stake_amount);
 
         // --- build milestones -------------------------------------------------
         let base_share = stake_amount / milestone_count as i128;
@@ -96,12 +98,12 @@ impl FidaraContract {
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
-    /// - `NotLearner` if caller is not the plan's learner
     /// - `NotPending` if the milestone is not in Pending state
     /// - `DeadlinePassed` if current ledger > deadline_ledger
     pub fn submit_milestone(env: Env, plan_id: u64, index: u32) -> Result<(), FidaraError> {
         let mut plan = Self::require_active_plan(&env, plan_id)?;
 
+        // Auth: only the plan's learner may submit.
         plan.learner.require_auth();
 
         let current_ledger = env.ledger().sequence();
@@ -116,21 +118,21 @@ impl FidaraContract {
 
         milestone.status = MilestoneStatus::Submitted;
         milestone.submitted_at = current_ledger;
-        Self::set_milestone(&env, &mut plan, index, milestone)?;
+        Self::set_milestone(&mut plan, index, milestone);
 
         storage::save_plan(&env, &plan);
         Ok(())
     }
 
-    /// Mentor verifies a submitted milestone — pays share to learner.
+    /// Mentor verifies a submitted milestone — pays the share to the learner.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
-    /// - `NotMentor` if caller is not the plan's mentor
     /// - `NotSubmitted` if the milestone is not in Submitted state
     pub fn verify_milestone(env: Env, plan_id: u64, index: u32) -> Result<(), FidaraError> {
         let mut plan = Self::require_active_plan(&env, plan_id)?;
 
+        // Auth: only the plan's mentor may verify.
         plan.mentor.require_auth();
 
         let mut milestone = Self::get_milestone(&plan, index)?;
@@ -143,11 +145,11 @@ impl FidaraContract {
         let share = milestone.share;
         let token = plan.token.clone();
 
-        Self::set_milestone(&env, &mut plan, index, milestone)?;
+        Self::set_milestone(&mut plan, index, milestone);
         Self::maybe_complete(&mut plan);
         storage::save_plan(&env, &plan);
 
-        // Transfer share to learner.
+        // Stake share goes to the learner — never to the mentor.
         token::Client::new(&env, &token).transfer(
             &env.current_contract_address(),
             &learner,
@@ -158,16 +160,16 @@ impl FidaraContract {
     }
 
     /// Mentor rejects a submitted milestone within the review window.
-    /// The learner may resubmit before the deadline.
+    /// The milestone returns to Pending so the learner may resubmit.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
-    /// - `NotMentor` if caller is not the plan's mentor
     /// - `NotSubmitted` if the milestone is not in Submitted state
     /// - `ReviewWindowClosed` if the review window has already elapsed
     pub fn reject_milestone(env: Env, plan_id: u64, index: u32) -> Result<(), FidaraError> {
         let mut plan = Self::require_active_plan(&env, plan_id)?;
 
+        // Auth: only the plan's mentor may reject.
         plan.mentor.require_auth();
 
         let mut milestone = Self::get_milestone(&plan, index)?;
@@ -182,7 +184,7 @@ impl FidaraContract {
 
         milestone.status = MilestoneStatus::Pending;
         milestone.submitted_at = 0;
-        Self::set_milestone(&env, &mut plan, index, milestone)?;
+        Self::set_milestone(&mut plan, index, milestone);
 
         storage::save_plan(&env, &plan);
         Ok(())
@@ -190,7 +192,9 @@ impl FidaraContract {
 
     /// Anyone can call this once the review window has passed and the milestone
     /// is still Submitted. Pays the share to the learner.
-    /// This prevents a silent mentor from trapping stake indefinitely.
+    ///
+    /// A silent or inactive mentor can never trap the stake indefinitely — any
+    /// address can call this function after the window expires.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
@@ -214,7 +218,7 @@ impl FidaraContract {
         let share = milestone.share;
         let token = plan.token.clone();
 
-        Self::set_milestone(&env, &mut plan, index, milestone)?;
+        Self::set_milestone(&mut plan, index, milestone);
         Self::maybe_complete(&mut plan);
         storage::save_plan(&env, &plan);
 
@@ -227,13 +231,15 @@ impl FidaraContract {
         Ok(())
     }
 
-    /// Anyone can forfeit a milestone that was never submitted after the deadline.
-    /// Pays the share to the forfeit_recipient.
+    /// Anyone can forfeit a milestone that was never submitted, once the
+    /// deadline has passed. Pays the share to the forfeit_recipient.
+    ///
+    /// A Submitted milestone cannot be forfeited — use `claim_unreviewed` for
+    /// that case.
     ///
     /// # Errors
     /// - `PlanNotFound`, `PlanNotActive`, `InvalidMilestoneIndex`
-    /// - `NotPending` if the milestone is not in Pending state (Submitted milestones
-    ///   cannot be forfeited — use `claim_unreviewed` for those)
+    /// - `NotPending` if the milestone is not in Pending state
     /// - `DeadlineNotPassed` if the deadline has not yet passed
     pub fn forfeit_milestone(env: Env, plan_id: u64, index: u32) -> Result<(), FidaraError> {
         let mut plan = Self::require_active_plan(&env, plan_id)?;
@@ -253,10 +259,11 @@ impl FidaraContract {
         let share = milestone.share;
         let token = plan.token.clone();
 
-        Self::set_milestone(&env, &mut plan, index, milestone)?;
+        Self::set_milestone(&mut plan, index, milestone);
         Self::maybe_complete(&mut plan);
         storage::save_plan(&env, &plan);
 
+        // Stake share goes to the forfeit recipient — never to the mentor.
         token::Client::new(&env, &token).transfer(
             &env.current_contract_address(),
             &recipient,
@@ -269,20 +276,19 @@ impl FidaraContract {
     /// Bump the TTL of a plan to keep it alive on-ledger.
     /// Anyone can call this.
     pub fn extend_plan(env: Env, plan_id: u64) -> Result<(), FidaraError> {
-        // verify the plan exists
         storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)?;
         storage::extend_plan_ttl(&env, plan_id);
         storage::extend_instance_ttl(&env);
         Ok(())
     }
 
-    /// Return the full plan struct.
+    /// Return the full plan struct (read-only).
     pub fn get_plan(env: Env, plan_id: u64) -> Result<Plan, FidaraError> {
         storage::load_plan(&env, plan_id).ok_or(FidaraError::PlanNotFound)
     }
 
     // -------------------------------------------------------------------------
-    // Internal helpers
+    // Private helpers
     // -------------------------------------------------------------------------
 
     fn require_active_plan(env: &Env, plan_id: u64) -> Result<Plan, FidaraError> {
@@ -300,20 +306,13 @@ impl FidaraContract {
         Ok(plan.milestones.get(index).unwrap())
     }
 
-    fn set_milestone(
-        _env: &Env,
-        plan: &mut Plan,
-        index: u32,
-        milestone: Milestone,
-    ) -> Result<(), FidaraError> {
-        if index >= plan.milestone_count {
-            return Err(FidaraError::InvalidMilestoneIndex);
-        }
+    /// Update a milestone in the plan's vec. The index is always pre-validated
+    /// by `get_milestone` before this is called, so the bound check is omitted.
+    fn set_milestone(plan: &mut Plan, index: u32, milestone: Milestone) {
         plan.milestones.set(index, milestone);
-        Ok(())
     }
 
-    /// Mark the plan Completed if every milestone is in a terminal state.
+    /// Mark the plan Completed once every milestone reaches a terminal state.
     fn maybe_complete(plan: &mut Plan) {
         let all_done = plan.milestones.iter().all(|m| {
             m.status == MilestoneStatus::Verified || m.status == MilestoneStatus::Forfeited

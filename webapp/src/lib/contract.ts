@@ -7,15 +7,18 @@
 // ---------------------------------------------------------------------------
 
 import {
+  Account,
+  Address,
+  BASE_FEE,
   Contract,
   Networks,
-  TransactionBuilder,
   nativeToScVal,
-  Address,
+  TransactionBuilder,
   xdr,
-  BASE_FEE,
-  SorobanRpc,
 } from "@stellar/stellar-sdk";
+// In stellar-sdk v13, the RPC utilities are exported as `rpc` (lower-case),
+// not as `SorobanRpc`.
+import { Server as RpcServer, assembleTransaction, Api as RpcApi } from "@stellar/stellar-sdk/rpc";
 
 import type { CreatePlanParams, Plan } from "../types/contract";
 import { signXdr } from "./wallet";
@@ -27,7 +30,7 @@ export const NETWORK_PASSPHRASE = Networks.TESTNET;
 export const CONTRACT_ID: string =
   import.meta.env.VITE_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 
-const rpc = new SorobanRpc.Server(TESTNET_RPC);
+const rpc = new RpcServer(TESTNET_RPC);
 
 // ---------------------------------------------------------------------------
 // Low-level helper: build → simulate → sign → submit
@@ -51,11 +54,11 @@ async function invokeContract(
 
   // Simulate to get the Soroban data (footprint, auth entries).
   const sim = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(sim)) {
+  if (RpcApi.isSimulationError(sim)) {
     throw new Error(`Simulation failed: ${sim.error}`);
   }
 
-  const prepared = SorobanRpc.assembleTransaction(tx, sim).build();
+  const prepared = assembleTransaction(tx, sim).build();
   const signedXdr = await signXdr(prepared.toXDR());
 
   const submitted = await rpc.sendTransaction(
@@ -63,21 +66,24 @@ async function invokeContract(
   );
 
   if (submitted.status === "ERROR") {
-    throw new Error(`Submission error: ${submitted.errorResult?.toXDR()}`);
+    throw new Error(
+      `Submission error: ${submitted.errorResult?.toXDR("base64") ?? "unknown"}`
+    );
   }
 
-  // Poll for completion.
+  // Poll until the transaction leaves the NOT_FOUND state.
   let response = await rpc.getTransaction(submitted.hash);
   for (let i = 0; i < 30; i++) {
-    if (response.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) break;
+    if (response.status !== RpcApi.GetTransactionStatus.NOT_FOUND) break;
     await new Promise((r) => setTimeout(r, 2000));
     response = await rpc.getTransaction(submitted.hash);
   }
 
-  if (response.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+  if (response.status !== RpcApi.GetTransactionStatus.SUCCESS) {
     throw new Error(`Transaction failed: ${response.status}`);
   }
 
+  // TypeScript now knows response is GetSuccessfulTransactionResponse.
   return response.returnValue ?? xdr.ScVal.scvVoid();
 }
 
@@ -99,6 +105,7 @@ export async function createPlan(
     nativeToScVal(params.deadlineLedger, { type: "u32" }),
     new Address(params.forfeitRecipient).toScVal(),
   ]);
+  // The contract returns u64; Long.js instances from xdr.Uint64 support .toString().
   return BigInt(result.u64().toString());
 }
 
@@ -166,18 +173,20 @@ export async function extendPlan(
   ]);
 }
 
-/** Read plan state — uses a read-only simulation (no signing needed). */
+/** Read plan state — uses a read-only simulation (no signing required). */
 export async function getPlan(planId: bigint): Promise<Plan> {
   const contract = new Contract(CONTRACT_ID);
-  // Use a dummy account for read-only simulation.
+  // A real Account instance is required by TransactionBuilder.
   const dummyKey = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-  const account = await rpc.getAccount(dummyKey).catch(() => ({
-    accountId: () => dummyKey,
-    sequence: () => "0",
-    incrementSequenceNumber: () => {},
-  }));
+  let account: Account;
+  try {
+    account = await rpc.getAccount(dummyKey);
+  } catch {
+    // Fallback for offline/test contexts.
+    account = new Account(dummyKey, "0");
+  }
 
-  const tx = new TransactionBuilder(account as Parameters<typeof TransactionBuilder>[0], {
+  const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
@@ -186,10 +195,10 @@ export async function getPlan(planId: bigint): Promise<Plan> {
     .build();
 
   const sim = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(sim)) {
+  if (RpcApi.isSimulationError(sim)) {
     throw new Error(`Simulation failed: ${sim.error}`);
   }
-  if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+  if (!RpcApi.isSimulationSuccess(sim) || !sim.result) {
     throw new Error("No result from simulation");
   }
 
@@ -197,8 +206,21 @@ export async function getPlan(planId: bigint): Promise<Plan> {
 }
 
 // ---------------------------------------------------------------------------
-// XDR → TypeScript deserialization
+// XDR → TypeScript deserialization helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Convert an xdr.Int128Parts value to a JavaScript BigInt.
+ * Int128Parts stores the value as two 64-bit halves: hi (signed) and lo (unsigned).
+ * Both are Long.js instances whose .toString() gives a decimal string.
+ */
+function int128PartsToBigInt(parts: xdr.Int128Parts): bigint {
+  // Long.js .toString() returns the correct decimal representation.
+  const hi = BigInt(parts.hi().toString());
+  const lo = BigInt(parts.lo().toString());
+  // Reconstruct: hi is the upper 64 signed bits, lo is the lower 64 unsigned bits.
+  return (hi << 64n) | lo;
+}
 
 function scValToPlan(val: xdr.ScVal): Plan {
   const map = val.map() ?? [];
@@ -215,27 +237,29 @@ function scValToPlan(val: xdr.ScVal): Plan {
     learner: Address.fromScVal(get("learner")).toString(),
     mentor: Address.fromScVal(get("mentor")).toString(),
     token: Address.fromScVal(get("token")).toString(),
-    stake_amount: BigInt(get("stake_amount").i128().toString()),
+    stake_amount: int128PartsToBigInt(get("stake_amount").i128()),
     milestone_count: get("milestone_count").u32(),
     deadline_ledger: get("deadline_ledger").u32(),
     review_window_ledgers: get("review_window_ledgers").u32(),
     forfeit_recipient: Address.fromScVal(get("forfeit_recipient")).toString(),
+    // PlanStatus is a Soroban enum — the SCVal is a vec with one sym entry.
     status: get("status").vec()?.[0].sym() === "Completed" ? "Completed" : "Active",
     milestones: milestonesVec.map(scValToMilestone),
   };
 }
 
-function scValToMilestone(val: xdr.ScVal) {
+function scValToMilestone(val: xdr.ScVal): import("../types/contract").Milestone {
   const map = val.map() ?? [];
   const get = (key: string): xdr.ScVal => {
     const entry = map.find((e) => e.key().sym() === key);
     if (!entry) throw new Error(`Missing milestone field: ${key}`);
     return entry.val();
   };
+  // MilestoneStatus is a Soroban enum — SCVal vec with one sym.
   const statusSym = get("status").vec()?.[0].sym() ?? "Pending";
   return {
     status: statusSym as import("../types/contract").MilestoneStatus,
     submitted_at: get("submitted_at").u32(),
-    share: BigInt(get("share").i128().toString()),
+    share: int128PartsToBigInt(get("share").i128()),
   };
 }
