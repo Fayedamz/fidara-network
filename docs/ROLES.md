@@ -159,3 +159,29 @@ Stake deposited at create_plan (plan = AwaitingMentor)
 | Stake flows to mentor | Token transfer only to `learner` or `forfeit_recipient` |
 | Zero-stake plan | `stake_amount > 0` enforced at plan creation |
 | Deadline in the past | `deadline_ledger > current_ledger + review_window_ledgers` enforced |
+
+---
+
+## Minimum Review Window
+
+`MIN_REVIEW_WINDOW_LEDGERS = 17 280` (≈ 1 day at 5 s/ledger).
+
+The mentor must have at least this many ledgers to review each submission. Plans with a
+shorter window are rejected at creation. This prevents a learner from setting a
+near-zero window and immediately claiming unreviewed stake.
+
+Source: docs/DECISIONS.md §D-001.
+
+---
+
+## Known Limitations
+
+See [docs/LIMITATIONS.md](LIMITATIONS.md) for the full list, including:
+
+- Mentor can reject repeatedly until the deadline.
+- The learner chooses the mentor with no on-chain endorsement.
+- Mentor and forfeit-recipient collusion through separate addresses cannot be prevented.
+- Dates shown are approximations; the contract enforces ledger numbers.
+- Plans need `extend_plan` to stay readable past the TTL window.
+- Token contract is trusted and not validated.
+- Testnet only; not audited.
