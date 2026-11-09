@@ -1,9 +1,10 @@
 #![cfg(test)]
 
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Events as _, Ledger, LedgerInfo},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env,
+    Address, Env, IntoVal, TryFromVal,
 };
 
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 
 struct TestEnv {
     env: Env,
+    fidara: Address,
     learner: Address,
     mentor: Address,
     forfeit: Address,
@@ -36,9 +38,11 @@ impl TestEnv {
         let token_admin = Address::generate(&env);
         let token = env.register_stellar_asset_contract_v2(token_admin.clone());
         StellarAssetClient::new(&env, &token.address()).mint(&learner, &1_000_000);
+        let fidara = env.register(FidaraContract, ());
 
         TestEnv {
             env,
+            fidara,
             learner,
             mentor,
             forfeit,
@@ -47,8 +51,7 @@ impl TestEnv {
     }
 
     fn client(&self) -> FidaraContractClient {
-        let contract_id = self.env.register(FidaraContract, ());
-        FidaraContractClient::new(&self.env, &contract_id)
+        FidaraContractClient::new(&self.env, &self.fidara)
     }
 
     fn ledger(&self) -> u32 {
@@ -1041,12 +1044,15 @@ fn test_event_plan_accepted() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before = t.env.events().all().len();
     client.accept_plan(&id);
-    assert!(
-        t.env.events().all().len() > before,
-        "no new events after accept_plan"
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("accepted")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }
 
 #[test]
@@ -1054,12 +1060,15 @@ fn test_event_plan_cancelled() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before = t.env.events().all().len();
     client.cancel_plan(&id);
-    assert!(
-        t.env.events().all().len() > before,
-        "no new events after cancel_plan"
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("cancelled")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }
 
 #[test]
@@ -1094,12 +1103,17 @@ fn test_event_milestone_rejected() {
     let client = t.client();
     let id = t.active_plan(&client);
     client.submit_milestone(&id, &0);
-    let before_count = t.env.events().all().len();
     client.reject_milestone(&id, &0);
-    let after_count = t.env.events().all().len();
-    assert!(
-        after_count > before_count,
-        "no new events after reject_milestone"
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("rejected")).into_val(&t.env)
+    );
+    assert_eq!(
+        <(u64, u32)>::try_from_val(&t.env, &event.2).unwrap(),
+        (id, 0u32)
     );
 }
 
@@ -1168,11 +1182,13 @@ fn test_event_plan_extended() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before_count = t.env.events().all().len();
     client.extend_plan(&id);
-    let after_count = t.env.events().all().len();
-    assert!(
-        after_count > before_count,
-        "no new events after extend_plan"
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("extended")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }
