@@ -35,7 +35,7 @@ Report privately using one of these channels:
 1. **GitHub private vulnerability reporting** — go to the
    [Security tab](../../security) of this repository and click
    **"Report a vulnerability"**.
-2. **Email** — send a report to `<SECURITY-CONTACT>` with the subject line
+2. **Email** — send a report to `<olqudsaint@gmail.com>` with the subject line
    `[fidara-network] Security vulnerability`.
 
 Include:
