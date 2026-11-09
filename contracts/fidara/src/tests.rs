@@ -1,9 +1,10 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, LedgerInfo},
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger, LedgerInfo},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env,
+    Address, Env, IntoVal, TryFromVal,
 };
 
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 
 struct TestEnv {
     env: Env,
+    fidara: Address,
     learner: Address,
     mentor: Address,
     forfeit: Address,
@@ -36,9 +38,11 @@ impl TestEnv {
         let token_admin = Address::generate(&env);
         let token = env.register_stellar_asset_contract_v2(token_admin.clone());
         StellarAssetClient::new(&env, &token.address()).mint(&learner, &1_000_000);
+        let fidara = env.register(FidaraContract, ());
 
         TestEnv {
             env,
+            fidara,
             learner,
             mentor,
             forfeit,
@@ -47,8 +51,7 @@ impl TestEnv {
     }
 
     fn client(&self) -> FidaraContractClient {
-        let contract_id = self.env.register(FidaraContract, ());
-        FidaraContractClient::new(&self.env, &contract_id)
+        FidaraContractClient::new(&self.env, &self.fidara)
     }
 
     fn ledger(&self) -> u32 {
@@ -71,19 +74,17 @@ impl TestEnv {
     fn active_plan(&self, client: &FidaraContractClient) -> u64 {
         let review = MIN_REVIEW_WINDOW_LEDGERS;
         let deadline = self.ledger() + review + 10_000;
-        let id = client
-            .create_plan(
-                &self.learner,
-                &self.mentor,
-                &self.token,
-                &300,
-                &3,
-                &review,
-                &deadline,
-                &self.forfeit,
-            )
-            .unwrap();
-        client.accept_plan(&id).unwrap();
+        let id = client.create_plan(
+            &self.learner,
+            &self.mentor,
+            &self.token,
+            &300,
+            &3,
+            &review,
+            &deadline,
+            &self.forfeit,
+        );
+        client.accept_plan(&id);
         id
     }
 
@@ -91,18 +92,16 @@ impl TestEnv {
     fn awaiting_plan(&self, client: &FidaraContractClient) -> u64 {
         let review = MIN_REVIEW_WINDOW_LEDGERS;
         let deadline = self.ledger() + review + 10_000;
-        client
-            .create_plan(
-                &self.learner,
-                &self.mentor,
-                &self.token,
-                &300,
-                &3,
-                &review,
-                &deadline,
-                &self.forfeit,
-            )
-            .unwrap()
+        client.create_plan(
+            &self.learner,
+            &self.mentor,
+            &self.token,
+            &300,
+            &3,
+            &review,
+            &deadline,
+            &self.forfeit,
+        )
     }
 }
 
@@ -115,7 +114,7 @@ fn test_create_plan_success_awaiting_mentor() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let plan = client.get_plan(&id).unwrap();
+    let plan = client.get_plan(&id);
     assert_eq!(plan.status, PlanStatus::AwaitingMentor);
     assert_eq!(plan.milestone_count, 3);
     assert_eq!(plan.stake_amount, 300);
@@ -332,8 +331,8 @@ fn test_accept_plan_success() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    client.accept_plan(&id).unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    client.accept_plan(&id);
+    let plan = client.get_plan(&id);
     assert_eq!(plan.status, PlanStatus::Active);
 }
 
@@ -341,7 +340,7 @@ fn test_accept_plan_success() {
 fn test_accept_plan_only_mentor() {
     let t = TestEnv::new();
     let client = t.client();
-    let id = t.awaiting_plan(&client);
+    let _id = t.awaiting_plan(&client);
     // PlanNotFound used as proxy — real auth failure requires dropping mock_all_auths.
     let err = client.try_accept_plan(&999).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::PlanNotFound.into());
@@ -352,7 +351,7 @@ fn test_accept_plan_only_once() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    client.accept_plan(&id).unwrap();
+    client.accept_plan(&id);
     let err = client.try_accept_plan(&id).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::PlanNotAwaitingMentor.into());
 }
@@ -373,7 +372,7 @@ fn test_accept_cancelled_plan_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    client.cancel_plan(&id).unwrap();
+    client.cancel_plan(&id);
     let err = client.try_accept_plan(&id).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::PlanNotAwaitingMentor.into());
 }
@@ -389,9 +388,9 @@ fn test_cancel_plan_full_refund() {
     let before = t.token_balance(&t.learner);
     let id = t.awaiting_plan(&client);
     assert_eq!(t.token_balance(&t.learner), before - 300);
-    client.cancel_plan(&id).unwrap();
+    client.cancel_plan(&id);
     assert_eq!(t.token_balance(&t.learner), before); // full refund
-    let plan = client.get_plan(&id).unwrap();
+    let plan = client.get_plan(&id);
     assert_eq!(plan.status, PlanStatus::Cancelled);
 }
 
@@ -409,7 +408,7 @@ fn test_cancel_plan_twice_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    client.cancel_plan(&id).unwrap();
+    client.cancel_plan(&id);
     let err = client.try_cancel_plan(&id).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::PlanNotAwaitingMentor.into());
 }
@@ -423,7 +422,7 @@ fn test_mentor_never_accepts_learner_cancels() {
     // Advance past deadline — mentor never accepted.
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
     // Learner can still cancel even after deadline (plan is still AwaitingMentor).
-    client.cancel_plan(&id).unwrap();
+    client.cancel_plan(&id);
     assert_eq!(t.token_balance(&t.learner), before);
 }
 
@@ -513,19 +512,17 @@ fn test_create_plan_twelve_milestones_ok() {
     let t = TestEnv::new();
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
-    let id = client
-        .create_plan(
-            &t.learner,
-            &t.mentor,
-            &t.token,
-            &120,
-            &12,
-            &review,
-            &(t.ledger() + review + 1_000),
-            &t.forfeit,
-        )
-        .unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    let id = client.create_plan(
+        &t.learner,
+        &t.mentor,
+        &t.token,
+        &120,
+        &12,
+        &review,
+        &(t.ledger() + review + 1_000),
+        &t.forfeit,
+    );
+    let plan = client.get_plan(&id);
     assert_eq!(plan.milestone_count, 12);
     assert_eq!(plan.milestones.get(0).unwrap().share, 10);
     assert_eq!(plan.milestones.get(11).unwrap().share, 10);
@@ -541,19 +538,17 @@ fn test_rounding_remainder_on_last_milestone() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     // 10 / 3 = 3 remainder 1
-    let id = client
-        .create_plan(
-            &t.learner,
-            &t.mentor,
-            &t.token,
-            &10,
-            &3,
-            &review,
-            &(t.ledger() + review + 1_000),
-            &t.forfeit,
-        )
-        .unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    let id = client.create_plan(
+        &t.learner,
+        &t.mentor,
+        &t.token,
+        &10,
+        &3,
+        &review,
+        &(t.ledger() + review + 1_000),
+        &t.forfeit,
+    );
+    let plan = client.get_plan(&id);
     assert_eq!(plan.milestones.get(0).unwrap().share, 3);
     assert_eq!(plan.milestones.get(1).unwrap().share, 3);
     assert_eq!(plan.milestones.get(2).unwrap().share, 4);
@@ -565,19 +560,17 @@ fn test_rounding_seven_milestones() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     // 100 / 7 = 14 r 2
-    let id = client
-        .create_plan(
-            &t.learner,
-            &t.mentor,
-            &t.token,
-            &100,
-            &7,
-            &review,
-            &(t.ledger() + review + 1_000),
-            &t.forfeit,
-        )
-        .unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    let id = client.create_plan(
+        &t.learner,
+        &t.mentor,
+        &t.token,
+        &100,
+        &7,
+        &review,
+        &(t.ledger() + review + 1_000),
+        &t.forfeit,
+    );
+    let plan = client.get_plan(&id);
     let mut total: i128 = 0;
     for i in 0..7u32 {
         total += plan.milestones.get(i).unwrap().share;
@@ -610,19 +603,17 @@ fn test_payout_never_exceeds_stake() {
     ];
 
     for (stake, count) in cases {
-        let id = client
-            .create_plan(
-                &t.learner,
-                &t.mentor,
-                &t.token,
-                stake,
-                count,
-                &review,
-                &(t.ledger() + review + 10_000),
-                &t.forfeit,
-            )
-            .unwrap();
-        let plan = client.get_plan(&id).unwrap();
+        let id = client.create_plan(
+            &t.learner,
+            &t.mentor,
+            &t.token,
+            stake,
+            count,
+            &review,
+            &(t.ledger() + review + 10_000),
+            &t.forfeit,
+        );
+        let plan = client.get_plan(&id);
         let total: i128 = (0..*count)
             .map(|i| plan.milestones.get(i).unwrap().share)
             .sum();
@@ -642,8 +633,8 @@ fn test_submit_milestone_success() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    client.submit_milestone(&id, &0);
+    let plan = client.get_plan(&id);
     assert_eq!(
         plan.milestones.get(0).unwrap().status,
         MilestoneStatus::Submitted
@@ -673,7 +664,7 @@ fn test_double_submit_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     let err = client.try_submit_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotPending.into());
 }
@@ -688,9 +679,9 @@ fn test_verify_milestone_pays_learner() {
     let client = t.client();
     let id = t.active_plan(&client);
     let before = t.token_balance(&t.learner);
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
+    let plan = client.get_plan(&id);
     assert_eq!(
         plan.milestones.get(0).unwrap().status,
         MilestoneStatus::Verified
@@ -712,8 +703,8 @@ fn test_resubmit_after_verify_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     let err = client.try_submit_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotPending.into());
 }
@@ -723,8 +714,8 @@ fn test_double_verify_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     let err = client.try_verify_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotSubmitted.into());
 }
@@ -738,22 +729,16 @@ fn test_reject_then_resubmit() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    client.reject_milestone(&id, &0).unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    client.submit_milestone(&id, &0);
+    client.reject_milestone(&id, &0);
+    let plan = client.get_plan(&id);
     assert_eq!(
         plan.milestones.get(0).unwrap().status,
         MilestoneStatus::Pending
     );
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     assert_eq!(
-        client
-            .get_plan(&id)
-            .unwrap()
-            .milestones
-            .get(0)
-            .unwrap()
-            .status,
+        client.get_plan(&id).milestones.get(0).unwrap().status,
         MilestoneStatus::Submitted
     );
 }
@@ -772,7 +757,7 @@ fn test_reject_after_review_window_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 1);
     let err = client.try_reject_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::ReviewWindowClosed.into());
@@ -783,8 +768,8 @@ fn test_double_reject_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    client.reject_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
+    client.reject_milestone(&id, &0);
     let err = client.try_reject_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotSubmitted.into());
 }
@@ -799,17 +784,11 @@ fn test_claim_unreviewed_success() {
     let client = t.client();
     let id = t.active_plan(&client);
     let before = t.token_balance(&t.learner);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 1);
-    client.claim_unreviewed(&id, &0).unwrap();
+    client.claim_unreviewed(&id, &0);
     assert_eq!(
-        client
-            .get_plan(&id)
-            .unwrap()
-            .milestones
-            .get(0)
-            .unwrap()
-            .status,
+        client.get_plan(&id).milestones.get(0).unwrap().status,
         MilestoneStatus::Verified
     );
     assert_eq!(t.token_balance(&t.learner), before + 100);
@@ -820,7 +799,7 @@ fn test_claim_unreviewed_window_open_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     // Don't advance — window is still open.
     let err = client.try_claim_unreviewed(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::ReviewWindowOpen.into());
@@ -841,9 +820,9 @@ fn test_mentor_silent_third_party_claims() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 1);
-    client.claim_unreviewed(&id, &0).unwrap();
+    client.claim_unreviewed(&id, &0);
     assert_eq!(t.token_balance(&t.learner), 1_000_000 - 300 + 100);
 }
 
@@ -858,15 +837,9 @@ fn test_forfeit_milestone_pays_recipient() {
     let id = t.active_plan(&client);
     let before = t.token_balance(&t.forfeit);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
-    client.forfeit_milestone(&id, &0).unwrap();
+    client.forfeit_milestone(&id, &0);
     assert_eq!(
-        client
-            .get_plan(&id)
-            .unwrap()
-            .milestones
-            .get(0)
-            .unwrap()
-            .status,
+        client.get_plan(&id).milestones.get(0).unwrap().status,
         MilestoneStatus::Forfeited
     );
     assert_eq!(t.token_balance(&t.forfeit), before + 100);
@@ -887,7 +860,7 @@ fn test_forfeit_submitted_milestone_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
     let err = client.try_forfeit_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotPending.into());
@@ -898,8 +871,8 @@ fn test_forfeit_verified_milestone_fails() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
     let err = client.try_forfeit_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::NotPending.into());
@@ -915,17 +888,15 @@ fn test_plan_completes_when_all_done() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
-    let id = client
-        .create_plan(
-            &t.learner, &t.mentor, &t.token, &200, &2, &review, &deadline, &t.forfeit,
-        )
-        .unwrap();
-    client.accept_plan(&id).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    let id = client.create_plan(
+        &t.learner, &t.mentor, &t.token, &200, &2, &review, &deadline, &t.forfeit,
+    );
+    client.accept_plan(&id);
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     t.advance(review + 10_001);
-    client.forfeit_milestone(&id, &1).unwrap();
-    assert_eq!(client.get_plan(&id).unwrap().status, PlanStatus::Completed);
+    client.forfeit_milestone(&id, &1);
+    assert_eq!(client.get_plan(&id).status, PlanStatus::Completed);
 }
 
 #[test]
@@ -934,14 +905,12 @@ fn test_actions_on_completed_plan_fail() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
-    let id = client
-        .create_plan(
-            &t.learner, &t.mentor, &t.token, &100, &1, &review, &deadline, &t.forfeit,
-        )
-        .unwrap();
-    client.accept_plan(&id).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    let id = client.create_plan(
+        &t.learner, &t.mentor, &t.token, &100, &1, &review, &deadline, &t.forfeit,
+    );
+    client.accept_plan(&id);
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     let err = client.try_submit_milestone(&id, &0).unwrap_err().unwrap();
     assert_eq!(err, FidaraError::PlanNotActive.into());
 }
@@ -951,22 +920,20 @@ fn test_single_milestone_plan_completes() {
     let t = TestEnv::new();
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
-    let id = client
-        .create_plan(
-            &t.learner,
-            &t.mentor,
-            &t.token,
-            &50,
-            &1,
-            &review,
-            &(t.ledger() + review + 1_000),
-            &t.forfeit,
-        )
-        .unwrap();
-    client.accept_plan(&id).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
-    assert_eq!(client.get_plan(&id).unwrap().status, PlanStatus::Completed);
+    let id = client.create_plan(
+        &t.learner,
+        &t.mentor,
+        &t.token,
+        &50,
+        &1,
+        &review,
+        &(t.ledger() + review + 1_000),
+        &t.forfeit,
+    );
+    client.accept_plan(&id);
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
+    assert_eq!(client.get_plan(&id).status, PlanStatus::Completed);
 }
 
 #[test]
@@ -975,8 +942,8 @@ fn test_stake_never_to_mentor() {
     let client = t.client();
     let id = t.active_plan(&client);
     for i in 0u32..3 {
-        client.submit_milestone(&id, &i).unwrap();
-        client.verify_milestone(&id, &i).unwrap();
+        client.submit_milestone(&id, &i);
+        client.verify_milestone(&id, &i);
     }
     assert_eq!(t.token_balance(&t.mentor), 0);
 }
@@ -1007,7 +974,7 @@ fn test_extend_plan_ok() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    client.extend_plan(&id).unwrap();
+    client.extend_plan(&id);
 }
 
 #[test]
@@ -1024,10 +991,10 @@ fn test_full_reject_resubmit_verify_journey() {
     let client = t.client();
     let id = t.active_plan(&client);
     let before = t.token_balance(&t.learner);
-    client.submit_milestone(&id, &0).unwrap();
-    client.reject_milestone(&id, &0).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
+    client.reject_milestone(&id, &0);
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
     assert_eq!(t.token_balance(&t.learner), before + 100);
 }
 
@@ -1037,20 +1004,18 @@ fn test_mixed_verify_forfeit_completes() {
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
     let deadline = t.ledger() + review + 10_000;
-    let id = client
-        .create_plan(
-            &t.learner, &t.mentor, &t.token, &300, &3, &review, &deadline, &t.forfeit,
-        )
-        .unwrap();
-    client.accept_plan(&id).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
-    client.verify_milestone(&id, &0).unwrap();
-    client.submit_milestone(&id, &1).unwrap();
+    let id = client.create_plan(
+        &t.learner, &t.mentor, &t.token, &300, &3, &review, &deadline, &t.forfeit,
+    );
+    client.accept_plan(&id);
+    client.submit_milestone(&id, &0);
+    client.verify_milestone(&id, &0);
+    client.submit_milestone(&id, &1);
     t.advance(review + 1);
-    client.claim_unreviewed(&id, &1).unwrap();
+    client.claim_unreviewed(&id, &1);
     t.advance(10_000);
-    client.forfeit_milestone(&id, &2).unwrap();
-    let plan = client.get_plan(&id).unwrap();
+    client.forfeit_milestone(&id, &2);
+    let plan = client.get_plan(&id);
     assert_eq!(plan.status, PlanStatus::Completed);
     assert_eq!(t.token_balance(&t.forfeit), 100);
     assert_eq!(t.token_balance(&t.learner), 1_000_000 - 300 + 200);
@@ -1079,12 +1044,15 @@ fn test_event_plan_accepted() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before = t.env.events().all().len();
-    client.accept_plan(&id).unwrap();
-    assert!(
-        t.env.events().all().len() > before,
-        "no new events after accept_plan"
+    client.accept_plan(&id);
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("accepted")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }
 
 #[test]
@@ -1092,12 +1060,15 @@ fn test_event_plan_cancelled() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before = t.env.events().all().len();
-    client.cancel_plan(&id).unwrap();
-    assert!(
-        t.env.events().all().len() > before,
-        "no new events after cancel_plan"
+    client.cancel_plan(&id);
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("cancelled")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }
 
 #[test]
@@ -1105,7 +1076,7 @@ fn test_event_milestone_submitted() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     // submit emits (plan_id, index) as data.
     let events = t.env.events().all();
     assert!(!events.is_empty(), "no events found after submit_milestone");
@@ -1116,9 +1087,9 @@ fn test_event_milestone_verified() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     let before_count = t.env.events().all().len();
-    client.verify_milestone(&id, &0).unwrap();
+    client.verify_milestone(&id, &0);
     let after_count = t.env.events().all().len();
     assert!(
         after_count > before_count,
@@ -1131,13 +1102,18 @@ fn test_event_milestone_rejected() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
-    let before_count = t.env.events().all().len();
-    client.reject_milestone(&id, &0).unwrap();
-    let after_count = t.env.events().all().len();
-    assert!(
-        after_count > before_count,
-        "no new events after reject_milestone"
+    client.submit_milestone(&id, &0);
+    client.reject_milestone(&id, &0);
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("rejected")).into_val(&t.env)
+    );
+    assert_eq!(
+        <(u64, u32)>::try_from_val(&t.env, &event.2).unwrap(),
+        (id, 0u32)
     );
 }
 
@@ -1146,10 +1122,10 @@ fn test_event_milestone_auto_released() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.active_plan(&client);
-    client.submit_milestone(&id, &0).unwrap();
+    client.submit_milestone(&id, &0);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 1);
     let before_count = t.env.events().all().len();
-    client.claim_unreviewed(&id, &0).unwrap();
+    client.claim_unreviewed(&id, &0);
     let after_count = t.env.events().all().len();
     assert!(
         after_count > before_count,
@@ -1164,7 +1140,7 @@ fn test_event_milestone_forfeited() {
     let id = t.active_plan(&client);
     t.advance(MIN_REVIEW_WINDOW_LEDGERS + 10_001);
     let before_count = t.env.events().all().len();
-    client.forfeit_milestone(&id, &0).unwrap();
+    client.forfeit_milestone(&id, &0);
     let after_count = t.env.events().all().len();
     assert!(
         after_count > before_count,
@@ -1177,22 +1153,20 @@ fn test_event_plan_completed() {
     let t = TestEnv::new();
     let client = t.client();
     let review = MIN_REVIEW_WINDOW_LEDGERS;
-    let id = client
-        .create_plan(
-            &t.learner,
-            &t.mentor,
-            &t.token,
-            &100,
-            &1,
-            &review,
-            &(t.ledger() + review + 1_000),
-            &t.forfeit,
-        )
-        .unwrap();
-    client.accept_plan(&id).unwrap();
-    client.submit_milestone(&id, &0).unwrap();
+    let id = client.create_plan(
+        &t.learner,
+        &t.mentor,
+        &t.token,
+        &100,
+        &1,
+        &review,
+        &(t.ledger() + review + 1_000),
+        &t.forfeit,
+    );
+    client.accept_plan(&id);
+    client.submit_milestone(&id, &0);
     let before_count = t.env.events().all().len();
-    client.verify_milestone(&id, &0).unwrap();
+    client.verify_milestone(&id, &0);
     let after_count = t.env.events().all().len();
     // verify_milestone emits both MilestoneVerified AND PlanCompleted.
     assert!(
@@ -1200,7 +1174,7 @@ fn test_event_plan_completed() {
         "expected ≥2 new events (verified + completed), got {}",
         after_count - before_count
     );
-    assert_eq!(client.get_plan(&id).unwrap().status, PlanStatus::Completed);
+    assert_eq!(client.get_plan(&id).status, PlanStatus::Completed);
 }
 
 #[test]
@@ -1208,11 +1182,13 @@ fn test_event_plan_extended() {
     let t = TestEnv::new();
     let client = t.client();
     let id = t.awaiting_plan(&client);
-    let before_count = t.env.events().all().len();
-    client.extend_plan(&id).unwrap();
-    let after_count = t.env.events().all().len();
-    assert!(
-        after_count > before_count,
-        "no new events after extend_plan"
+    client.extend_plan(&id);
+    let events = t.env.events().all();
+    let event = events.get(events.len() - 1).unwrap();
+    assert_eq!(event.0, t.fidara);
+    assert_eq!(
+        event.1,
+        (symbol_short!("fidara"), symbol_short!("extended")).into_val(&t.env)
     );
+    assert_eq!(u64::try_from_val(&t.env, &event.2).unwrap(), id);
 }

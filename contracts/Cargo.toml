@@ -18,3 +18,7 @@ soroban-env-common = { git = "https://github.com/stellar/rs-soroban-env", tag = 
 soroban-env-guest = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
 soroban-env-macros = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
 soroban-builtin-sdk-macros = { git = "https://github.com/stellar/rs-soroban-env", tag = "v22.1.1" }
+
+
+[profile.release]
+overflow-checks = true
