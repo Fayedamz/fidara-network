@@ -45,6 +45,9 @@ jobs:
         working-directory: contracts
         run: cargo test --locked
 
+      - name: Install stellar-cli system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Build contract WASM (stellar contract build)
         working-directory: contracts
         # stellar contract build is the canonical command from the official docs.
