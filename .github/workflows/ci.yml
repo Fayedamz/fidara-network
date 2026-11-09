@@ -39,11 +39,11 @@ jobs:
 
       - name: cargo clippy -D warnings
         working-directory: contracts
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: cargo test
         working-directory: contracts
-        run: cargo test
+        run: cargo test --locked
 
       - name: Build contract WASM (stellar contract build)
         working-directory: contracts
