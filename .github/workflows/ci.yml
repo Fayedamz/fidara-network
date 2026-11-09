@@ -46,7 +46,7 @@ jobs:
         run: cargo test --locked
 
       - name: Install stellar-cli system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libudev-dev libssl-dev pkg-config
 
       - name: Build contract WASM (stellar contract build)
         working-directory: contracts
